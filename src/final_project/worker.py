@@ -1,7 +1,12 @@
+import argparse
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import os
 from threading import Lock, Condition, Thread
 from queue import Queue, Empty
+from argparse import ArgumentParser
 
+from dotenv import load_dotenv
 import pyarrow as pa
 import pyarrow.flight
 import duckdb
@@ -21,16 +26,22 @@ class Config:
 
 class Worker(pa.flight.FlightServerBase):
     
-    def __init__(self, location='grpc://localhost:5005'):
+    def __init__(self, location='grpc://localhost:5005', config=None):
         super().__init__(location)
         self._location = location
         self.cv = Condition(Lock())
         self.task_queue = Queue()
         self.completed_tasks = {}
-        self.config = Config('', '', '')
+        self.config = config
         self.peers = {}
         self.inited = False
-
+        if config:
+            self.do_init(config)
+            
+            
+    def do_put(self, context, ticket, reader):
+        pass
+            
 
     def do_get(self, context, ticket):
         assert self.inited, 'Server not inited'
@@ -59,7 +70,6 @@ class Worker(pa.flight.FlightServerBase):
 
     def do_action(self, context, action):
         print(f'Server received action: {action.type}')
-        print(action.type == 'init')
         if action.type == 'give_work':
             self.do_give_work(action.body.to_pybytes().decode('utf-8'))
         elif action.type == 'add_peer':
@@ -67,24 +77,26 @@ class Worker(pa.flight.FlightServerBase):
         elif action.type == 'remove_peer':
             self.do_remove_peer(action.body.to_pybytes().decode('utf-8'))
         elif action.type == 'init':
-            self.do_init(json.loads(action.body.to_pybytes().decode('utf-8')))
+            self.do_init(Config(**json.loads(action.body.to_pybytes().decode('utf-8'))))
 
 
     def do_add_peer(self, peer_location):
+        print(f'Adding peer with location: {peer_location}')
         self.peers[peer_location] = pa.flight.connect(peer_location)
 
 
     def do_remove_peer(self, peer_location):
+        print(f'Removing peer with location: {peer_location}')
         self.peers.pop(peer_location)
 
  
-    def do_init(self, config):
-        print(f'initializing server with config: {config}')
+    def do_init(self, config: Config):
         assert config.AWS_KEY_ID and config.AWS_SECRET_KEY and config.AWS_REGION, 'AWS credentials not set in config'
         
         self.inited = True
-        con = self._init_duckdb(Config(**config))
+        con = self._init_duckdb(config)
         self.worker_thread = Thread(target=self._do_work, args=(con,)).start()
+        print(self.inited)
 
 
     def do_give_work(self, peer_location):
@@ -119,16 +131,23 @@ class Worker(pa.flight.FlightServerBase):
 
 
     def _do_work(self, con):
-        while True:
-            try:
-                task = self.task_queue.get(timeout=5)
-                result = con.execute(task.query, task.args).fetch_arrow_table()
-                with self.cv:
-                    self.completed_tasks[task] = result
-                    self.cv.notify_all()
-            except Empty:
-                print('no task found')
-                Thread(target=self._steal_work).start()
+        with ThreadPoolExecutor(max_workers=1) as steal_executor:
+            while True:
+                try:
+                    task = self.task_queue.get(timeout=5)
+                    while task.query == 'loop':
+                        pass
+                    try:
+                        result = con.execute(task.query, task.args).fetch_arrow_table()
+                    except Exception as e:
+                        result = e
+
+                    with self.cv:
+                        self.completed_tasks[task] = result
+                        self.cv.notify_all()
+                except Empty:
+                    print('no task found')
+                    steal_executor.submit(self._steal_work)
 
 
     def _steal_work(self):
@@ -142,7 +161,18 @@ class Worker(pa.flight.FlightServerBase):
             
 
 if __name__ == "__main__":
-    worker = Worker('grpc://localhost:5005')
+    argparser = ArgumentParser()
+    argparser.add_argument('-p', '--port', type=int, default=5005)
+    args = argparser.parse_args()
+    
+    load_dotenv()
+    config = {
+        'AWS_KEY_ID': os.getenv("AWS_KEY_ID"),
+        'AWS_SECRET_KEY': os.getenv("AWS_SECRET_KEY"),
+        'AWS_REGION': os.getenv("AWS_REGION")
+    }
+
+    worker = Worker(f'grpc://localhost:{args.port}', Config(**config))
     print('running server')
-    server.serve()
+    worker.serve()
     

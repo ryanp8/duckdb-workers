@@ -3,8 +3,6 @@ import os
 from dotenv import load_dotenv
 import duckdb
 
-from final_project.flight_server import FlightServer
-
 
 if __name__ == "__main__":
     
@@ -17,8 +15,10 @@ if __name__ == "__main__":
     con = duckdb.connect()
 
     con.execute('''
-    INSTALL httpfs;
-    LOAD httpfs;
+    -- INSTALL httpfs;
+    -- LOAD httpfs;
+    INSTALL cache_httpfs from community;
+    LOAD cache_httpfs;
     CREATE SECRET secret (
         TYPE s3,
         KEY_ID ?,
