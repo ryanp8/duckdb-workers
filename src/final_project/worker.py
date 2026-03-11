@@ -1,6 +1,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from enum import Enum
 from threading import Lock, Condition, Thread
 from queue import Queue, Empty
 from argparse import ArgumentParser
@@ -12,10 +13,16 @@ import duckdb
 import json
 import random
 
+class TaskType(Enum):
+    READ = 'read'
+    WRITE = 'write'
+
 @dataclass(frozen=True)
 class Task:
+    type: TaskType
     query: str
     args: tuple
+    is_stolen: bool = False
     
 @dataclass
 class Config:
@@ -42,15 +49,14 @@ class Worker(pa.flight.FlightServerBase):
         assert self.inited, 'Server not inited'
         body = json.loads(ticket.ticket.decode('utf-8'))
         print(f'Server received request with body: {body}')
-        query = body['query']
-        args = body['args']
-        task = Task(query, tuple(args))
+        task_type = TaskType.READ if body['type'] == 'read' else TaskType.WRITE
+        task = Task(task_type, body['query'], tuple(body['args']), body['is_stolen'])
         self.task_queue.put(task)
 
         with self.cv:
             self.cv.wait_for(lambda: task in self.completed_tasks)
             result = self.completed_tasks.pop(task)
-
+            print(result)
         return pa.flight.RecordBatchStream(result)
 
 
@@ -99,8 +105,10 @@ class Worker(pa.flight.FlightServerBase):
         try:
             task = self.task_queue.get(block=False)
             ticket = {
+                'type': task.type.value,
                 'query': task.query,
-                'args': task.args
+                'args': task.args,
+                'is_stolen': True
             }
             result = peer_conn.do_get(pa.flight.Ticket(json.dumps(ticket)))
             with self.cv:
@@ -113,8 +121,9 @@ class Worker(pa.flight.FlightServerBase):
     def _init_duckdb(self, config):
         con = duckdb.connect()
         con.execute('''
-        INSTALL httpfs;
-        LOAD httpfs;
+        INSTALL cache_httpfs from community;
+        LOAD cache_httpfs;
+        SET cache_httpfs_profile_type='temp';
         CREATE SECRET secret (
             TYPE s3,
             KEY_ID ?,
@@ -130,12 +139,17 @@ class Worker(pa.flight.FlightServerBase):
             while True:
                 try:
                     task = self.task_queue.get(timeout=5)
-                    while task.query == 'loop':
-                        pass
+                    # Don't cache if work is stolen
+                    if task.is_stolen:
+                        con.execute("SET cache_httpfs_type='noop';")
+
                     try:
                         result = con.execute(task.query, task.args).fetch_arrow_table()
                     except Exception as e:
-                        result = e
+                        result = pa.Table.from_pydict({'error': [str(e)]})
+
+                    if task.is_stolen:
+                       con.execute("SET cache_httpfs_profile_type='temp';")
 
                     with self.cv:
                         self.completed_tasks[task] = result

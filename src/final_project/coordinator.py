@@ -66,8 +66,10 @@ class Coordinator:
         print(f'Executing read with query: {query} and args: {args} on files: {files}')
         worker = self._select_worker(files)
         ticket = {
+            'type': 'read',
             'query': query,
-            'args': args
+            'args': args,
+            'is_stolen': False
         }
 
         result = worker.do_get(pa.flight.Ticket(json.dumps(ticket)))
@@ -86,8 +88,10 @@ class Coordinator:
 
         worker = self._select_worker(files)
         ticket = {
+            'type': 'write',
             'query': query,
-            'args': args
+            'args': args,
+            'is_stolen': False
         }
         while query == 'loop':
             pass
