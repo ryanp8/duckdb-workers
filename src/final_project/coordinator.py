@@ -69,8 +69,7 @@ class Coordinator:
             'query': query,
             'args': args
         }
-        while query == 'loop':
-            pass
+
         result = worker.do_get(pa.flight.Ticket(json.dumps(ticket)))
         reader = result.to_reader()
         sink = pa.BufferOutputStream()
@@ -83,8 +82,7 @@ class Coordinator:
 
     
     def execute_write(self, files, query, args):
-        for file in files:
-            self.lock_manager.wfiles.add(file)
+        self.lock_manager.add_wfiles(files)
 
         worker = self._select_worker(files)
         ticket = {
@@ -93,9 +91,17 @@ class Coordinator:
         }
         while query == 'loop':
             pass
-        # reader = worker.do_put(pa.flight.Ticket(json.dumps(ticket)))
-        # return reader.read_all()
-        return b''
+        
+        # Use do get to execute all queries (read and write) for now
+        result = worker.do_get(pa.flight.Ticket(json.dumps(ticket)))
+        reader = result.to_reader()
+        sink = pa.BufferOutputStream()
+        with pa.ipc.new_stream(sink, reader.schema) as writer:
+            for batch in reader:
+                writer.write_batch(batch)
+
+        self.lock_manager.remove_wfiles(files)
+        return sink.getvalue().to_pybytes()
     
     
 if __name__ == "__main__":

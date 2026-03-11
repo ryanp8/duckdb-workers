@@ -1,7 +1,6 @@
-import argparse
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-import os
 from threading import Lock, Condition, Thread
 from queue import Queue, Empty
 from argparse import ArgumentParser
@@ -37,10 +36,6 @@ class Worker(pa.flight.FlightServerBase):
         self.inited = False
         if config:
             self.do_init(config)
-            
-            
-    def do_put(self, context, ticket, reader):
-        pass
             
 
     def do_get(self, context, ticket):
