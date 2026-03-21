@@ -41,6 +41,7 @@ class Worker(pa.flight.FlightServerBase):
         self.config = config
         self.peers = {}
         self.inited = False
+        self.con = None
         if config:
             self.do_init(config)
             
@@ -79,6 +80,8 @@ class Worker(pa.flight.FlightServerBase):
             self.do_remove_peer(action.body.to_pybytes().decode('utf-8'))
         elif action.type == 'init':
             self.do_init(Config(**json.loads(action.body.to_pybytes().decode('utf-8'))))
+        elif action.type == 'clear_cache':
+            self.do_clear_cache()
 
 
     def do_add_peer(self, peer_location):
@@ -95,8 +98,8 @@ class Worker(pa.flight.FlightServerBase):
         assert config.AWS_KEY_ID and config.AWS_SECRET_KEY and config.AWS_REGION, 'AWS credentials not set in config'
         
         self.inited = True
-        con = self._init_duckdb(config)
-        self.worker_thread = Thread(target=self._do_work, args=(con,)).start()
+        self.con = self._init_duckdb(config)
+        self.worker_thread = Thread(target=self._do_work, args=(self.con,)).start()
         print(self.inited)
 
 
@@ -124,6 +127,7 @@ class Worker(pa.flight.FlightServerBase):
         INSTALL cache_httpfs from community;
         LOAD cache_httpfs;
         SET cache_httpfs_profile_type='temp';
+        SET cache_httpfs_cache_block_size=4096;
         CREATE SECRET secret (
             TYPE s3,
             KEY_ID ?,
@@ -168,6 +172,10 @@ class Worker(pa.flight.FlightServerBase):
                 print(e)
                 pass
             
+    
+    def do_clear_cache(self):
+        self.con.execute('SELECT cache_httpfs_clear_cache();')
+            
 
 if __name__ == "__main__":
     argparser = ArgumentParser()
@@ -181,7 +189,7 @@ if __name__ == "__main__":
         'AWS_REGION': os.getenv("AWS_REGION")
     }
 
-    worker = Worker(f'grpc://localhost:{args.port}', Config(**config))
+    worker = Worker(f'grpc://0.0.0.0:{args.port}', Config(**config))
     print('running server')
     worker.serve()
     

@@ -1,3 +1,4 @@
+import hashlib
 from threading import Lock
 
 import pyarrow as pa
@@ -48,17 +49,28 @@ class LockManager:
 class Coordinator:
     
     def __init__(self, workers=[]):
-        self._workers_conns = []
+        self._workers_conns = {}
         for worker in workers:
             self.add_worker(worker)
+        self.md5 = hashlib.md5()
         self.lock_manager = LockManager()
     
     def add_worker(self, location):
         conn = pyarrow.flight.connect(location)
-        self._workers_conns.append(conn)
+        self._workers_conns[location] = conn
         
     def _select_worker(self, files):
-        return self._workers_conns[0]
+        target = files[0]
+        largest = ''
+        selected_worker = None
+        for location in self._workers_conns:
+            combined = target + location
+            self.md5.update(combined.encode())
+            if self.md5.hexdigest() > largest:
+                largest = self.md5.hexdigest()
+                selected_worker = self._workers_conns[location]
+        return selected_worker
+
 
     def execute_read(self, files, query, args):
         self.lock_manager.add_rfiles(files)
@@ -107,29 +119,20 @@ class Coordinator:
         self.lock_manager.remove_wfiles(files)
         return sink.getvalue().to_pybytes()
     
+    def clear_cache(self, worker_location):
+        assert worker_location in self._workers_conns, f'Worker {worker_location} not found'
+        worker = self._workers_conns[worker_location]
+        worker.do_action(pa.flight.Action('clear_cache', b''))
+    
+    def clear_all_cache(self):
+        for location in self._workers_conns:
+            self.clear_cache(location)
+    
     
 if __name__ == "__main__":
-    # conn = grpc.insecure_channel('grpc://localhost:5005')
-    # conn.
-    # coordinator = Coordinator()
-    # coordinator.add_worker('localhost:5005')
-    # coordinator.add_worker('localhost:5006')
 
-    # result = coordinator.execute('', 'select ?', [10])
-    
-    # query = "SELECT * FROM read_parquet('s3://aws-public-blockchain/v1.0/btc/blocks/date=2023-05-04/part-00000-833f1ffd-f3fb-4221-b2be-1a71c47c95c3-c000.snappy.parquet');"
-    # # query = 'hi'
-    # result = coordinator.execute([], query, [])
-    # print(result)
-    
     app = Flask(__name__)
     coordinator = Coordinator()
-    coordinator.add_worker('grpc://localhost:5005')
-    
-    # query = 'select ?;'
-    # args = [10]
-    # result = coordinator.execute_read([], query, args)
-    # print(result)
     
     @app.post('/write')
     def write():
@@ -156,5 +159,20 @@ if __name__ == "__main__":
         except Exception as e:
             print(f'Error executing read: {e}')
             return json.dumps({'error': str(e)}), 400
+        
+    @app.post('/clear_cache')
+    def clear_cache():
+        body = request.json
+        worker_location = body.get('worker_location', None)
+        try:
+            if not worker_location:
+                coordinator.clear_all_cache()
+            else:
+                coordinator.clear_cache(worker_location)
+            return json.dumps({'result': 'Cache cleared successfully'})
+        except Exception as e:
+            print(f'Error clearing cache: {e}')
+            return json.dumps({'error': str(e)}), 400
+        
 
     app.run()
