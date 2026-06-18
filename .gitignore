@@ -1,4 +1,4 @@
 .env
-venv/
+.venv/
 deploy.sh
 src/final_project/setup.py

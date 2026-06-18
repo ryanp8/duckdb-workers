@@ -5,13 +5,13 @@ from enum import Enum
 from threading import Lock, Condition, Thread
 from queue import Queue, Empty
 from argparse import ArgumentParser
-
 from dotenv import load_dotenv
 import pyarrow as pa
 import pyarrow.flight
 import duckdb
 import json
 import random
+import base64
 
 class TaskType(Enum):
     READ = 'read'
@@ -83,7 +83,6 @@ class Worker(pa.flight.FlightServerBase):
         elif action.type == 'clear_cache':
             self.do_clear_cache()
 
-
     def do_add_peer(self, peer_location):
         print(f'Adding peer with location: {peer_location}')
         self.peers[peer_location] = pa.flight.connect(peer_location)
@@ -117,7 +116,7 @@ class Worker(pa.flight.FlightServerBase):
             with self.cv:
                     self.completed_tasks[task] = result.read_all()
                     self.cv.notify_all()
-        except:
+        except Exception:
             print('no work to give')
 
 
