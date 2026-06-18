@@ -38,6 +38,8 @@ reader = client.read(body)
 print(reader.read_all())
 ```
 
+Because Apache Arrow Flight is used to communicate, the results of a request can be easily converted into a dataframe for further processing.
+
 ## Preliminary Evaluation
 Running on t3.micro AWS EC2 instances using the AWS Public
 Blockchain Dataset on 30 parquet files. Each file is read 3 times
