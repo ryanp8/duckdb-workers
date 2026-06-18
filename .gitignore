@@ -2,3 +2,4 @@
 .venv/
 deploy.sh
 src/final_project/setup.py
+.DS_Store
