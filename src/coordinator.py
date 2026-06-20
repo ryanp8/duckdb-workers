@@ -34,8 +34,9 @@ class Coordinator:
         for location in self._workers_conns:
             combined = target + location
             self.md5.update(combined.encode())
-            if self.md5.hexdigest() > largest:
-                largest = self.md5.hexdigest()
+            digest = self.md5.hexdigest()
+            if digest > largest:
+                largest = digest
                 selected_worker = self._workers_conns[location]
         return selected_worker
 
