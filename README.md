@@ -60,7 +60,7 @@ Because Apache Arrow Flight is used to communicate, the results of a request can
 
 ## Preliminary Evaluation
 Running on t3.micro AWS EC2 instances using the AWS Public
-Blockchain Dataset on 30 parquet files. Each file is read 3 times
+Blockchain Dataset on 30 parquet files with 5 trials. For each run, each file is read 3 times
 to see the effects of caching.
 
 | # Workers | Avg Time with Caching | Avg Time Without Caching |
